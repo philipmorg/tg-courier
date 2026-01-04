@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+
+AGENTS.local.md
+
+data/state.json
+data/tg-courier.log
+data/*.corrupt.*
+data/inbox/
+
+# Keep the directory, not your notes
+memory/**/*.tmp.*
+memory/**/*.md
+
+__pycache__/
+*.pyc
