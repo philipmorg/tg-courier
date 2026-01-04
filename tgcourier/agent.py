@@ -28,6 +28,7 @@ class Agent:
         prompt: str,
         *,
         yolo: bool = False,
+        sandbox: str | None = None,
         on_oauth_url: Callable[[str], Awaitable[None]] | None = None,
     ) -> AgentReply:
         raise NotImplementedError
@@ -44,6 +45,7 @@ class ShellAgent(Agent):
         prompt: str,
         *,
         yolo: bool = False,
+        sandbox: str | None = None,
         on_oauth_url: Callable[[str], Awaitable[None]] | None = None,
     ) -> AgentReply:
         proc = await asyncio.create_subprocess_exec(
@@ -87,6 +89,7 @@ class CodexExecAgent(Agent):
         prompt: str,
         *,
         yolo: bool = False,
+        sandbox: str | None = None,
         on_oauth_url: Callable[[str], Awaitable[None]] | None = None,
     ) -> AgentReply:
         if not shutil.which("codex"):
@@ -94,6 +97,7 @@ class CodexExecAgent(Agent):
 
         with tempfile.TemporaryDirectory(prefix="tg-courier-codex-") as td:
             out_path = Path(td) / "last_message.txt"
+            effective_sandbox = (sandbox or self._settings.codex_sandbox).strip() or "workspace-write"
             cmd: list[str] = [
                 "codex",
                 "exec",
@@ -104,7 +108,7 @@ class CodexExecAgent(Agent):
                 *(
                     ["--dangerously-bypass-approvals-and-sandbox"]
                     if yolo
-                    else ["--sandbox", self._settings.codex_sandbox]
+                    else ["--sandbox", effective_sandbox]
                 ),
                 "--output-last-message",
                 str(out_path),

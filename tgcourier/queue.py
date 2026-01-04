@@ -249,6 +249,8 @@ class QueueManager:
             prior = store.get_messages(chat_id, settings.max_turns)
             store.append(chat_id, "user", user_text)
             codex_yolo = bool(store.get_pref(chat_id, "codex_yolo", False))
+            codex_sandbox_pref = store.get_pref(chat_id, "codex_sandbox", None)
+            codex_sandbox = str(codex_sandbox_pref).strip() if isinstance(codex_sandbox_pref, str) else None
 
         prompt = render_prompt(sys_prompt, prior, user_text)
 
@@ -285,7 +287,12 @@ class QueueManager:
                     )
 
         try:
-            reply = await self._agent.ask(prompt, yolo=codex_yolo, on_oauth_url=on_oauth_url)
+            reply = await self._agent.ask(
+                prompt,
+                yolo=codex_yolo,
+                sandbox=codex_sandbox,
+                on_oauth_url=on_oauth_url,
+            )
         except TimeoutError:
             await send_chat(
                 self._bot,
@@ -310,4 +317,3 @@ class QueueManager:
             store.append(chat_id, "assistant", reply.text)
         self._logger.info("tx chat_id=%s job_id=%s chars=%s", chat_id, job.job_id, len(reply.text))
         await send_chat(self._bot, chat_id, reply.text)
-

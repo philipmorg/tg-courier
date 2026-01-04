@@ -55,6 +55,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/drop (clear pending queue)",
         "/w (codex) yolo mode on",
         "/ro (codex) yolo mode off",
+        "/sandbox_rw (codex) sandbox=workspace-write",
+        "/sandbox_ro (codex) sandbox=read-only",
         "/mem <text> append daily",
         "/mem_rebuild rebuild backlinks",
     ]
@@ -88,6 +90,16 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         codex_yolo = bool(
             update.effective_chat and store.get_pref(update.effective_chat.id, "codex_yolo", False)
         )
+        codex_sandbox_pref = (
+            store.get_pref(update.effective_chat.id, "codex_sandbox", None)
+            if update.effective_chat
+            else None
+        )
+        effective_sandbox = (
+            str(codex_sandbox_pref).strip()
+            if isinstance(codex_sandbox_pref, str) and str(codex_sandbox_pref).strip()
+            else settings.codex_sandbox
+        )
 
     lines = [
         f"agent: {settings.agent}",
@@ -95,7 +107,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"state: {store.path}",
         f"allowed_user_id: {_resolve_allowed_user_id(settings, store) or '(none)'}",
         f"allowed_username: @{_resolve_allowed_username(settings) or '(none)'}",
-        f"codex_sandbox: {settings.codex_sandbox}",
+        f"codex_sandbox: {effective_sandbox}",
         f"codex_yolo: {codex_yolo}",
         f"heartbeat_sec: {settings.heartbeat_sec}",
         f"inbox_dir: {settings.inbox_dir}",
@@ -253,6 +265,42 @@ async def cmd_ro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     async with state_lock:
         store.set_pref(update.effective_chat.id, "codex_yolo", False)
     await send_update(update, "Codex yolo: OFF")
+
+
+async def cmd_sandbox_rw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.bot_data["settings"]
+    store: StateStore = context.bot_data["store"]
+    state_lock: asyncio.Lock = context.bot_data["state_lock"]
+
+    if not _is_allowed_user(settings, store, update):
+        return
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+    if settings.agent != "codex":
+        await send_update(update, "Not using Codex (AGENT!=codex).")
+        return
+
+    async with state_lock:
+        store.set_pref(update.effective_chat.id, "codex_sandbox", "workspace-write")
+    await send_update(update, "Codex sandbox: workspace-write")
+
+
+async def cmd_sandbox_ro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.bot_data["settings"]
+    store: StateStore = context.bot_data["store"]
+    state_lock: asyncio.Lock = context.bot_data["state_lock"]
+
+    if not _is_allowed_user(settings, store, update):
+        return
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+    if settings.agent != "codex":
+        await send_update(update, "Not using Codex (AGENT!=codex).")
+        return
+
+    async with state_lock:
+        store.set_pref(update.effective_chat.id, "codex_sandbox", "read-only")
+    await send_update(update, "Codex sandbox: read-only")
 
 
 async def cmd_mem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

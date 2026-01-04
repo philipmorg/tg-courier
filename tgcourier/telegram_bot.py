@@ -19,6 +19,8 @@ from .handlers import (
     cmd_queue,
     cmd_reset,
     cmd_ro,
+    cmd_sandbox_ro,
+    cmd_sandbox_rw,
     cmd_status,
     cmd_w,
     cmd_whoami,
@@ -112,6 +114,8 @@ def main(*, echo_local: bool = False, log_path: Path | None = None) -> None:
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("w", cmd_w))
     app.add_handler(CommandHandler("ro", cmd_ro))
+    app.add_handler(CommandHandler("sandbox_rw", cmd_sandbox_rw))
+    app.add_handler(CommandHandler("sandbox_ro", cmd_sandbox_ro))
     app.add_handler(CommandHandler("queue", cmd_queue))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("drop", cmd_drop))
@@ -123,4 +127,3 @@ def main(*, echo_local: bool = False, log_path: Path | None = None) -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
     app.run_polling()
-

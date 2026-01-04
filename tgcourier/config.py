@@ -154,7 +154,7 @@ def load_settings(base_dir: Path) -> Settings:
     agent_cmd_raw = _get_str("AGENT_CMD")
     agent_cmd = shlex.split(agent_cmd_raw) if agent_cmd_raw else None
 
-    codex_sandbox = _get_str("CODEX_SANDBOX", "read-only") or "read-only"
+    codex_sandbox = _get_str("CODEX_SANDBOX", "workspace-write") or "workspace-write"
     codex_model = _get_str("CODEX_MODEL")
     codex_extra_args = shlex.split(_get_str("CODEX_ARGS", "") or "")
 

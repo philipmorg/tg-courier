@@ -36,7 +36,7 @@ AGENT="codex"
 
 # Optional: point Codex at a workdir + sandbox
 AGENT_WORKDIR="~/Documents/dev"
-CODEX_SANDBOX="read-only" # or workspace-write / danger-full-access
+CODEX_SANDBOX="workspace-write" # or read-only / danger-full-access
 
 # Heartbeat: if an agent turn takes longer than this, bot sends a quiet “working…” ping every N seconds
 HEARTBEAT_SEC="45"
@@ -92,6 +92,8 @@ cd tg-courier
 - `/cancel` cancel current job and clear queue
 - `/w` codex “yolo” mode on (dangerous)
 - `/ro` codex “yolo” mode off
+- `/sandbox_rw` codex sandbox to `workspace-write`
+- `/sandbox_ro` codex sandbox to `read-only`
 - `/mem <text>` append to today’s note
 - `/mem_rebuild` rebuild backlinks (“collector” sections)
 
