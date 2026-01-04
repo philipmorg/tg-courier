@@ -4,6 +4,14 @@ Tiny Telegram DM → local CLI agent bridge. Single-user. JSON chat history.
 
 Inspired by `https://github.com/clawdbot/clawdbot` (great project) but intentionally much smaller + local-first.
 
+## Requirements
+
+- Python 3.11+ + `uv`
+- Telegram bot token (`@BotFather`)
+- Optional: `codex` CLI (default agent) or set `AGENT=shell`
+- Optional: `peekaboo` (OAuth click-through help)
+- Optional: `ffmpeg` + `llm` + `llm-groq-whisper` (speech-to-text)
+
 ## Setup
 
 1) Create a Telegram bot with `@BotFather`, copy token.
