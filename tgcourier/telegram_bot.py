@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from .agent import build_agent
 from .bg_jobs import BgJobManager
@@ -14,11 +14,6 @@ from .handlers import (
     cmd_cancel,
     cmd_claim,
     cmd_drop,
-    cmd_job,
-    cmd_job_cancel,
-    cmd_job_tail,
-    cmd_jobs,
-    cmd_bg,
     cmd_help,
     cmd_mem,
     cmd_mem_rebuild,
@@ -33,6 +28,14 @@ from .handlers import (
     on_audio,
     on_text,
     on_voice,
+)
+from .handlers_bg import (
+    cmd_bg,
+    cmd_job,
+    cmd_job_cancel,
+    cmd_job_tail,
+    cmd_jobs,
+    on_bg_callback,
 )
 from .memory import MemoryConfig, MemoryStore
 from .prompts import SYSTEM_PROMPT
@@ -131,6 +134,7 @@ def main(*, echo_local: bool = False, log_path: Path | None = None) -> None:
     app.add_handler(CommandHandler("job", cmd_job))
     app.add_handler(CommandHandler("job_tail", cmd_job_tail))
     app.add_handler(CommandHandler("job_cancel", cmd_job_cancel))
+    app.add_handler(CallbackQueryHandler(on_bg_callback, pattern=r"^bg:"))
     app.add_handler(CommandHandler("w", cmd_w))
     app.add_handler(CommandHandler("ro", cmd_ro))
     app.add_handler(CommandHandler("sandbox_rw", cmd_sandbox_rw))

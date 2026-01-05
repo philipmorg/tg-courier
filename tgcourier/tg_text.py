@@ -106,28 +106,41 @@ def render_telegram_html(text: str) -> str:
     return "".join(out)
 
 
-async def send_chat(bot, chat_id: int, text: str) -> None:
-    for c in chunk(text):
+async def send_chat(bot, chat_id: int, text: str, *, reply_markup=None) -> None:
+    chunks = chunk(text)
+    for i, c in enumerate(chunks):
         try:
             await bot.send_message(
                 chat_id=chat_id,
                 text=render_telegram_html(c),
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
+                reply_markup=reply_markup if i == len(chunks) - 1 else None,
             )
         except BadRequest:
-            await bot.send_message(chat_id=chat_id, text=c, disable_web_page_preview=True)
+            await bot.send_message(
+                chat_id=chat_id,
+                text=c,
+                disable_web_page_preview=True,
+                reply_markup=reply_markup if i == len(chunks) - 1 else None,
+            )
 
 
-async def send_update(update, text: str) -> None:
+async def send_update(update, text: str, *, reply_markup=None) -> None:
     if not update.effective_chat:
         return
-    for c in chunk(text):
+    chunks = chunk(text)
+    for i, c in enumerate(chunks):
         try:
             await update.effective_chat.send_message(
                 render_telegram_html(c),
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
+                reply_markup=reply_markup if i == len(chunks) - 1 else None,
             )
         except BadRequest:
-            await update.effective_chat.send_message(c, disable_web_page_preview=True)
+            await update.effective_chat.send_message(
+                c,
+                disable_web_page_preview=True,
+                reply_markup=reply_markup if i == len(chunks) - 1 else None,
+            )

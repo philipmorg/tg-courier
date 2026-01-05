@@ -142,6 +142,17 @@ class BgJobManager:
         asyncio.create_task(self._run(job))
         return job
 
+    def active_for_chat(self, chat_id: int) -> list[BgJob]:
+        ids = self._by_chat.get(chat_id, [])
+        jobs = [self._jobs[i] for i in ids if i in self._jobs]
+        active: list[BgJob] = []
+        for j in jobs:
+            if j.ended_ms is not None:
+                continue
+            active.append(j)
+        active.sort(key=lambda j: j.job_id)
+        return active
+
     async def list_for_chat(self, chat_id: int, *, limit: int = 20) -> list[BgJob]:
         async with self._lock:
             ids = list(reversed(self._by_chat.get(chat_id, [])))[: max(1, int(limit))]

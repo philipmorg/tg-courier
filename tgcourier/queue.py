@@ -16,6 +16,7 @@ from .memory import MemoryStore
 from .state import StateStore, render_prompt
 from .stt import TranscriptionError, cleanup_file, transcribe_file
 from .tool_directives import extract_detach_directive
+from .tg_actions import build_bg_job_actions
 from .tg_oauth import oauth_peekaboo_flow
 from .tg_text import send_chat
 
@@ -199,13 +200,14 @@ class QueueManager:
     async def _run_job(self, chat_id: int, job: Job) -> None:
         settings = self._settings
         store = self._store
+        actions = build_bg_job_actions(self._bg, chat_id=chat_id)
 
         user_text = job.text
         audio_path: Path | None = None
 
         if job.kind == "audio":
             if not job.file_id:
-                await send_chat(self._bot, chat_id, "Missing audio file_id; skipping.")
+                await send_chat(self._bot, chat_id, "Missing audio file_id; skipping.", reply_markup=actions)
                 return
 
             await self._bot.send_message(
@@ -230,7 +232,7 @@ class QueueManager:
             try:
                 transcription = await transcribe_file(audio_path, settings=settings, logger=self._logger)
             except TranscriptionError as e:
-                await send_chat(self._bot, chat_id, f"Transcription failed: {e}")
+                await send_chat(self._bot, chat_id, f"Transcription failed: {e}", reply_markup=actions)
                 return
             finally:
                 if audio_path and not settings.stt_keep_files:
@@ -242,7 +244,7 @@ class QueueManager:
                 user_text = transcription
 
             preview = transcription if len(transcription) <= 1200 else transcription[:1200] + "…"
-            await send_chat(self._bot, chat_id, f"Transcription (preview):\n{preview}")
+            await send_chat(self._bot, chat_id, f"Transcription (preview):\n{preview}", reply_markup=actions)
 
         mem_ctx = self._memory.build_context(user_text) if settings.memory_enabled else ""
         sys_prompt = self._system_prompt
@@ -302,12 +304,13 @@ class QueueManager:
                 self._bot,
                 chat_id,
                 "Agent timeout. Set `AGENT_TIMEOUT_SEC=0` (recommended) or increase it to allow longer runs.",
+                reply_markup=actions,
             )
             return
         except asyncio.CancelledError:
             raise
         except TelegramError as e:
-            await send_chat(self._bot, chat_id, f"Telegram error: {e}")
+            await send_chat(self._bot, chat_id, f"Telegram error: {e}", reply_markup=actions)
             return
         finally:
             hb_task.cancel()
@@ -347,10 +350,15 @@ class QueueManager:
             async with self._state_lock:
                 store.append(chat_id, "assistant", msg)
             self._logger.info("tx(detach) chat_id=%s job_id=%s bg_job_id=%s", chat_id, job.job_id, bg_job.job_id)
-            await send_chat(self._bot, chat_id, msg)
+            await send_chat(
+                self._bot,
+                chat_id,
+                msg,
+                reply_markup=build_bg_job_actions(self._bg, chat_id=chat_id),
+            )
             return
 
         async with self._state_lock:
             store.append(chat_id, "assistant", reply.text)
         self._logger.info("tx chat_id=%s job_id=%s chars=%s", chat_id, job.job_id, len(reply.text))
-        await send_chat(self._bot, chat_id, reply.text)
+        await send_chat(self._bot, chat_id, reply.text, reply_markup=actions)

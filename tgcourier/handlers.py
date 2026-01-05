@@ -6,38 +6,12 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from .auth import is_allowed_user, resolve_allowed_user_id, resolve_allowed_username
 from .config import Settings
-from .bg_jobs import BgJobManager
 from .memory import MemoryStore
 from .queue import QueueManager
 from .state import StateStore
-from .tg_text import send_update
-
-
-def _resolve_allowed_user_id(settings: Settings, store: StateStore) -> int | None:
-    if settings.allowed_user_id is not None:
-        return settings.allowed_user_id
-    return store.get_claimed_user_id()
-
-
-def _resolve_allowed_username(settings: Settings) -> str | None:
-    return settings.allowed_username.lower() if settings.allowed_username else None
-
-
-def _is_allowed_user(settings: Settings, store: StateStore, update: Update) -> bool:
-    if not update.effective_user:
-        return False
-
-    allowed_user_id = _resolve_allowed_user_id(settings, store)
-    if allowed_user_id is not None:
-        return update.effective_user.id == allowed_user_id
-
-    allowed_username = _resolve_allowed_username(settings)
-    if allowed_username:
-        username = (update.effective_user.username or "").strip().lower()
-        return bool(username) and username == allowed_username
-
-    return False
+from .tg_reply import send_update_with_actions
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -66,16 +40,17 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/mem <text> append daily",
         "/mem_rebuild rebuild backlinks",
     ]
-    if settings.claim_code and _resolve_allowed_user_id(settings, store) is None:
+    if settings.claim_code and resolve_allowed_user_id(settings, store) is None:
         lines.append("(claim enabled: you must /claim first)")
-    await send_update(update, "\n".join(lines))
+    await send_update_with_actions(update, context, "\n".join(lines))
 
 
 async def cmd_whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     chat = update.effective_chat
-    await send_update(
+    await send_update_with_actions(
         update,
+        context,
         "\n".join(
             [
                 f"user_id: {user.id if user else 'unknown'}",
@@ -111,8 +86,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"agent: {settings.agent}",
         f"workdir: {settings.agent_workdir}",
         f"state: {store.path}",
-        f"allowed_user_id: {_resolve_allowed_user_id(settings, store) or '(none)'}",
-        f"allowed_username: @{_resolve_allowed_username(settings) or '(none)'}",
+        f"allowed_user_id: {resolve_allowed_user_id(settings, store) or '(none)'}",
+        f"allowed_username: @{resolve_allowed_username(settings) or '(none)'}",
         f"codex_sandbox: {effective_sandbox}",
         f"codex_yolo: {codex_yolo}",
         f"heartbeat_sec: {settings.heartbeat_sec}",
@@ -126,7 +101,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"oauth_auto_allow: {settings.oauth_auto_allow}",
         f"oauth_browser_app: {settings.oauth_browser_app}",
     ]
-    await send_update(update, "\n".join(lines))
+    await send_update_with_actions(update, context, "\n".join(lines))
 
 
 async def cmd_claim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -136,32 +111,32 @@ async def cmd_claim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args or []
 
     if settings.allowed_user_id is not None or settings.allowed_username is not None:
-        await send_update(update, "Already locked via TELEGRAM_ALLOWED_USER_ID/USERNAME.")
+        await send_update_with_actions(update, context, "Already locked via TELEGRAM_ALLOWED_USER_ID/USERNAME.")
         return
     if not settings.claim_code:
-        await send_update(update, "Claim disabled (missing TELEGRAM_CLAIM_CODE).")
+        await send_update_with_actions(update, context, "Claim disabled (missing TELEGRAM_CLAIM_CODE).")
         return
 
     current = store.get_claimed_user_id()
     if current is not None:
-        await send_update(update, f"Already claimed by user_id {current}.")
+        await send_update_with_actions(update, context, f"Already claimed by user_id {current}.")
         return
 
     if not args:
-        await send_update(update, "Usage: /claim <code>")
+        await send_update_with_actions(update, context, "Usage: /claim <code>")
         return
 
     if args[0] != settings.claim_code:
-        await send_update(update, "Bad claim code.")
+        await send_update_with_actions(update, context, "Bad claim code.")
         return
 
     if not update.effective_user:
-        await send_update(update, "No user found on update.")
+        await send_update_with_actions(update, context, "No user found on update.")
         return
 
     async with state_lock:
         store.set_claimed_user_id(update.effective_user.id)
-    await send_update(update, f"Claimed. allowed_user_id={update.effective_user.id}")
+    await send_update_with_actions(update, context, f"Claimed. allowed_user_id={update.effective_user.id}")
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -170,7 +145,7 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     qm: QueueManager = context.bot_data["queue_manager"]
     state_lock: asyncio.Lock = context.bot_data["state_lock"]
 
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.effective_chat:
         return
@@ -178,7 +153,7 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await qm.cancel_and_clear(update.effective_chat.id)
     async with state_lock:
         store.reset_chat(update.effective_chat.id)
-    await send_update(update, "Reset chat history (and canceled queue).")
+    await send_update_with_actions(update, context, "Reset chat history (and canceled queue).")
 
 
 async def cmd_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -186,14 +161,14 @@ async def cmd_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     store: StateStore = context.bot_data["store"]
     qm: QueueManager = context.bot_data["queue_manager"]
 
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.effective_chat:
         return
 
     current, pending = await qm.snapshot(update.effective_chat.id)
     if not current and not pending:
-        await send_update(update, "Queue empty.")
+        await send_update_with_actions(update, context, "Queue empty.")
         return
 
     lines: list[str] = []
@@ -207,7 +182,7 @@ async def cmd_queue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             lines.append(f"- #{j.job_id}: {label[:60]}{'…' if len(label) > 60 else ''}")
         if len(pending) > len(preview):
             lines.append(f"(+{len(pending) - len(preview)} more)")
-    await send_update(update, "\n".join(lines))
+    await send_update_with_actions(update, context, "\n".join(lines))
 
 
 async def cmd_drop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -215,13 +190,13 @@ async def cmd_drop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     store: StateStore = context.bot_data["store"]
     qm: QueueManager = context.bot_data["queue_manager"]
 
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.effective_chat:
         return
 
     n = await qm.drop_pending(update.effective_chat.id)
-    await send_update(update, f"Dropped {n} pending job(s).")
+    await send_update_with_actions(update, context, f"Dropped {n} pending job(s).")
 
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -229,163 +204,13 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     store: StateStore = context.bot_data["store"]
     qm: QueueManager = context.bot_data["queue_manager"]
 
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.effective_chat:
         return
 
     await qm.cancel_and_clear(update.effective_chat.id)
-    await send_update(update, "Canceled current job and cleared queue.")
-
-
-async def cmd_bg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings: Settings = context.bot_data["settings"]
-    store: StateStore = context.bot_data["store"]
-    bg: BgJobManager = context.bot_data["bg_jobs"]
-
-    if not _is_allowed_user(settings, store, update):
-        return
-    if not update.effective_chat or update.effective_chat.type != "private":
-        return
-
-    cmd_text = " ".join(context.args or []).strip()
-    if not cmd_text:
-        await send_update(update, "Usage: /bg <command> (runs detached; bot remains usable)")
-        return
-
-    cmd = ["/bin/zsh", "-lc", cmd_text]
-    title = cmd_text if len(cmd_text) <= 80 else cmd_text[:80] + "…"
-    job = await bg.start(chat_id=update.effective_chat.id, title=title, cmd=cmd, cwd=settings.agent_workdir)
-    await send_update(update, f"Launched background job #{job.job_id}. Log: {job.log_path}")
-
-
-async def cmd_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings: Settings = context.bot_data["settings"]
-    store: StateStore = context.bot_data["store"]
-    bg: BgJobManager = context.bot_data["bg_jobs"]
-
-    if not _is_allowed_user(settings, store, update):
-        return
-    if not update.effective_chat or update.effective_chat.type != "private":
-        return
-
-    jobs = await bg.list_for_chat(update.effective_chat.id, limit=20)
-    if not jobs:
-        await send_update(update, "No background jobs yet.")
-        return
-
-    lines: list[str] = ["Background jobs:"]
-    for j in jobs[:20]:
-        if j.exit_code is None and j.proc is not None and j.proc.returncode is None:
-            status = "running"
-        elif j.exit_code is None and j.ended_ms is None:
-            status = "starting"
-        else:
-            status = f"done exit={j.exit_code}"
-        lines.append(f"- #{j.job_id}: {status} — {j.title}")
-    await send_update(update, "\n".join(lines))
-
-
-async def cmd_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings: Settings = context.bot_data["settings"]
-    store: StateStore = context.bot_data["store"]
-    bg: BgJobManager = context.bot_data["bg_jobs"]
-
-    if not _is_allowed_user(settings, store, update):
-        return
-    if not update.effective_chat or update.effective_chat.type != "private":
-        return
-
-    if not context.args:
-        await send_update(update, "Usage: /job <id>")
-        return
-    try:
-        job_id = int(context.args[0])
-    except ValueError:
-        await send_update(update, "Usage: /job <id> (id must be an integer)")
-        return
-
-    j = await bg.get(job_id)
-    if not j or j.chat_id != update.effective_chat.id:
-        await send_update(update, f"Job #{job_id} not found.")
-        return
-
-    status = "running" if j.proc and j.proc.returncode is None else f"done exit={j.exit_code}"
-    await send_update(
-        update,
-        "\n".join(
-            [
-                f"job: #{j.job_id}",
-                f"status: {status}",
-                f"pid: {j.pid or '(none)'}",
-                f"cwd: {j.cwd}",
-                f"log: {j.log_path}",
-                f"title: {j.title}",
-                f"cmd: {' '.join(j.cmd)}",
-            ]
-        ),
-    )
-
-
-async def cmd_job_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings: Settings = context.bot_data["settings"]
-    store: StateStore = context.bot_data["store"]
-    bg: BgJobManager = context.bot_data["bg_jobs"]
-
-    if not _is_allowed_user(settings, store, update):
-        return
-    if not update.effective_chat or update.effective_chat.type != "private":
-        return
-
-    if not context.args:
-        await send_update(update, "Usage: /job_tail <id>")
-        return
-    try:
-        job_id = int(context.args[0])
-    except ValueError:
-        await send_update(update, "Usage: /job_tail <id> (id must be an integer)")
-        return
-
-    j = await bg.get(job_id)
-    if not j or j.chat_id != update.effective_chat.id:
-        await send_update(update, f"Job #{job_id} not found.")
-        return
-
-    if not j.log_path.exists():
-        await send_update(update, f"No log yet for job #{job_id}.")
-        return
-
-    tail = j.log_path.read_text(encoding="utf-8", errors="replace")
-    tail = tail[-2800:] if len(tail) > 2800 else tail
-    await send_update(update, f"Tail for #{j.job_id}:\n```{tail.strip()}```")
-
-
-async def cmd_job_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings: Settings = context.bot_data["settings"]
-    store: StateStore = context.bot_data["store"]
-    bg: BgJobManager = context.bot_data["bg_jobs"]
-
-    if not _is_allowed_user(settings, store, update):
-        return
-    if not update.effective_chat or update.effective_chat.type != "private":
-        return
-
-    if not context.args:
-        await send_update(update, "Usage: /job_cancel <id>")
-        return
-    try:
-        job_id = int(context.args[0])
-    except ValueError:
-        await send_update(update, "Usage: /job_cancel <id> (id must be an integer)")
-        return
-
-    j = await bg.get(job_id)
-    if not j or j.chat_id != update.effective_chat.id:
-        await send_update(update, f"Job #{job_id} not found.")
-        return
-
-    ok = await bg.cancel(job_id)
-    await send_update(update, "Cancel requested." if ok else "Not running (or already finished).")
+    await send_update_with_actions(update, context, "Canceled current job and cleared queue.")
 
 
 async def cmd_w(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -393,17 +218,17 @@ async def cmd_w(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     store: StateStore = context.bot_data["store"]
     state_lock: asyncio.Lock = context.bot_data["state_lock"]
 
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.effective_chat or update.effective_chat.type != "private":
         return
     if settings.agent != "codex":
-        await send_update(update, "Not using Codex (AGENT!=codex).")
+        await send_update_with_actions(update, context, "Not using Codex (AGENT!=codex).")
         return
 
     async with state_lock:
         store.set_pref(update.effective_chat.id, "codex_yolo", True)
-    await send_update(update, "Codex yolo: ON")
+    await send_update_with_actions(update, context, "Codex yolo: ON")
 
 
 async def cmd_ro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -411,17 +236,17 @@ async def cmd_ro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     store: StateStore = context.bot_data["store"]
     state_lock: asyncio.Lock = context.bot_data["state_lock"]
 
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.effective_chat or update.effective_chat.type != "private":
         return
     if settings.agent != "codex":
-        await send_update(update, "Not using Codex (AGENT!=codex).")
+        await send_update_with_actions(update, context, "Not using Codex (AGENT!=codex).")
         return
 
     async with state_lock:
         store.set_pref(update.effective_chat.id, "codex_yolo", False)
-    await send_update(update, "Codex yolo: OFF")
+    await send_update_with_actions(update, context, "Codex yolo: OFF")
 
 
 async def cmd_sandbox_rw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -429,17 +254,17 @@ async def cmd_sandbox_rw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     store: StateStore = context.bot_data["store"]
     state_lock: asyncio.Lock = context.bot_data["state_lock"]
 
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.effective_chat or update.effective_chat.type != "private":
         return
     if settings.agent != "codex":
-        await send_update(update, "Not using Codex (AGENT!=codex).")
+        await send_update_with_actions(update, context, "Not using Codex (AGENT!=codex).")
         return
 
     async with state_lock:
         store.set_pref(update.effective_chat.id, "codex_sandbox", "workspace-write")
-    await send_update(update, "Codex sandbox: workspace-write")
+    await send_update_with_actions(update, context, "Codex sandbox: workspace-write")
 
 
 async def cmd_sandbox_ro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -447,17 +272,17 @@ async def cmd_sandbox_ro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     store: StateStore = context.bot_data["store"]
     state_lock: asyncio.Lock = context.bot_data["state_lock"]
 
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.effective_chat or update.effective_chat.type != "private":
         return
     if settings.agent != "codex":
-        await send_update(update, "Not using Codex (AGENT!=codex).")
+        await send_update_with_actions(update, context, "Not using Codex (AGENT!=codex).")
         return
 
     async with state_lock:
         store.set_pref(update.effective_chat.id, "codex_sandbox", "read-only")
-    await send_update(update, "Codex sandbox: read-only")
+    await send_update_with_actions(update, context, "Codex sandbox: read-only")
 
 
 async def cmd_mem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -466,22 +291,22 @@ async def cmd_mem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     mem: MemoryStore = context.bot_data["memory"]
     logger: logging.Logger = context.bot_data["logger"]
 
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.effective_chat or update.effective_chat.type != "private":
         return
     if not settings.memory_enabled:
-        await send_update(update, "Memory disabled (MEMORY_ENABLED=0).")
+        await send_update_with_actions(update, context, "Memory disabled (MEMORY_ENABLED=0).")
         return
 
     text = " ".join(context.args or []).strip()
     if not text:
-        await send_update(update, "Usage: /mem <text> (appends to today’s note)")
+        await send_update_with_actions(update, context, "Usage: /mem <text> (appends to today’s note)")
         return
 
     path = mem.append_daily(text)
     logger.info("mem append path=%s", path)
-    await send_update(update, f"Saved to: {path}")
+    await send_update_with_actions(update, context, f"Saved to: {path}")
 
 
 async def cmd_mem_rebuild(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -490,17 +315,17 @@ async def cmd_mem_rebuild(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     mem: MemoryStore = context.bot_data["memory"]
     logger: logging.Logger = context.bot_data["logger"]
 
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.effective_chat or update.effective_chat.type != "private":
         return
     if not settings.memory_enabled:
-        await send_update(update, "Memory disabled (MEMORY_ENABLED=0).")
+        await send_update_with_actions(update, context, "Memory disabled (MEMORY_ENABLED=0).")
         return
 
     n = mem.rebuild_backlinks()
     logger.info("mem rebuild updated=%s", n)
-    await send_update(update, f"Backlinks rebuilt. Updated {n} files.")
+    await send_update_with_actions(update, context, f"Backlinks rebuilt. Updated {n} files.")
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -513,7 +338,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if update.effective_chat.type != "private":
         return
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
 
     text = (update.message.text or "").strip()
@@ -523,9 +348,9 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("rx text chat_id=%s", update.effective_chat.id)
     job_id, pos, started = await qm.enqueue_text(update.effective_chat.id, text)
     if started and pos == 1:
-        await send_update(update, f"Queued as #{job_id}. Starting now.")
+        await send_update_with_actions(update, context, f"Queued as #{job_id}. Starting now.")
     else:
-        await send_update(update, f"Queued as #{job_id} (position {pos}).")
+        await send_update_with_actions(update, context, f"Queued as #{job_id} (position {pos}).")
 
 
 async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -538,7 +363,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if update.effective_chat.type != "private":
         return
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
     if not update.message.voice:
         return
@@ -551,7 +376,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message_id=update.message.message_id,
         caption=update.message.caption,
     )
-    await send_update(update, f"Queued voice as #{job_id} (position {pos}).")
+    await send_update_with_actions(update, context, f"Queued voice as #{job_id} (position {pos}).")
 
 
 async def on_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -564,7 +389,7 @@ async def on_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if update.effective_chat.type != "private":
         return
-    if not _is_allowed_user(settings, store, update):
+    if not is_allowed_user(settings, store, update):
         return
 
     file_id: str | None = None
@@ -588,4 +413,4 @@ async def on_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message_id=update.message.message_id,
         caption=caption,
     )
-    await send_update(update, f"Queued audio as #{job_id} (position {pos}).")
+    await send_update_with_actions(update, context, f"Queued audio as #{job_id} (position {pos}).")
