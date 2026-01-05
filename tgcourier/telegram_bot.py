@@ -10,6 +10,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Mess
 from .agent import build_agent
 from .bg_jobs import BgJobManager
 from .config import load_settings
+from .errors import on_telegram_error
 from .handlers import (
     cmd_cancel,
     cmd_claim,
@@ -149,4 +150,5 @@ def main(*, echo_local: bool = False, log_path: Path | None = None) -> None:
     app.add_handler(MessageHandler(filters.AUDIO | filters.Document.ALL, on_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
+    app.add_error_handler(on_telegram_error)
     app.run_polling()
