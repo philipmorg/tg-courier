@@ -116,6 +116,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"codex_sandbox: {effective_sandbox}",
         f"codex_yolo: {codex_yolo}",
         f"heartbeat_sec: {settings.heartbeat_sec}",
+        f"bg_heartbeat_sec: {settings.bg_heartbeat_sec}",
         f"inbox_dir: {settings.inbox_dir}",
         f"memory_dir: {settings.memory_dir}",
         f"memory_enabled: {settings.memory_enabled}",

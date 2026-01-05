@@ -41,6 +41,9 @@ CODEX_SANDBOX="workspace-write" # or read-only / danger-full-access
 # Heartbeat: if an agent turn takes longer than this, bot sends a quiet “working…” ping every N seconds
 HEARTBEAT_SEC="45"
 
+# Background jobs: status pings (edit-in-place) every N seconds. 0 disables.
+BG_HEARTBEAT_SEC="180"
+
 # Timeout: 0 disables agent timeouts (recommended; heartbeat tells you it’s still alive)
 AGENT_TIMEOUT_SEC="0"
 

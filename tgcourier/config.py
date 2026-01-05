@@ -71,6 +71,8 @@ class Settings:
 
     heartbeat_sec: int
 
+    bg_heartbeat_sec: int
+
     inbox_dir: Path
 
     memory_dir: Path
@@ -130,6 +132,7 @@ def load_settings(base_dir: Path) -> Settings:
     agent_workdir = Path(_get_str("AGENT_WORKDIR", os.getcwd())).expanduser()
 
     heartbeat_sec = int(_get_str("HEARTBEAT_SEC", "45"))
+    bg_heartbeat_sec = int(_get_str("BG_HEARTBEAT_SEC", "180"))
 
     inbox_dir = Path(_get_str("INBOX_DIR", str(base_dir / "data" / "inbox"))).expanduser()
 
@@ -171,6 +174,7 @@ def load_settings(base_dir: Path) -> Settings:
         agent_workdir=agent_workdir,
         agent_timeout_sec=agent_timeout_sec,
         heartbeat_sec=heartbeat_sec,
+        bg_heartbeat_sec=bg_heartbeat_sec,
         inbox_dir=inbox_dir,
         memory_dir=memory_dir,
         memory_enabled=memory_enabled,

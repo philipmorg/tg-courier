@@ -94,7 +94,12 @@ def main(*, echo_local: bool = False, log_path: Path | None = None) -> None:
 
     app = Application.builder().token(settings.token).concurrent_updates(True).build()
     state_lock = asyncio.Lock()
-    bg = BgJobManager(bot=app.bot, base_dir=base_dir, logger=logger)
+    bg = BgJobManager(
+        bot=app.bot,
+        base_dir=base_dir,
+        logger=logger,
+        heartbeat_sec=settings.bg_heartbeat_sec,
+    )
     queue_manager = QueueManager(
         bot=app.bot,
         agent=agent,

@@ -7,6 +7,7 @@ import signal
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from datetime import timedelta
 
 from .tg_text import send_chat
 
@@ -26,6 +27,7 @@ class BgJob:
     started_ms: int | None = None
     ended_ms: int | None = None
     exit_code: int | None = None
+    status_message_id: int | None = None
 
 
 def _tail_text(path: Path, *, max_chars: int = 2600) -> str:
@@ -41,9 +43,10 @@ def _tail_text(path: Path, *, max_chars: int = 2600) -> str:
 
 
 class BgJobManager:
-    def __init__(self, *, bot, base_dir: Path, logger) -> None:
+    def __init__(self, *, bot, base_dir: Path, logger, heartbeat_sec: int = 180) -> None:
         self._bot = bot
         self._logger = logger
+        self._heartbeat_sec = int(heartbeat_sec)
         self._lock = asyncio.Lock()
         self._next_id = 1
         self._jobs: dict[int, BgJob] = {}
@@ -51,6 +54,66 @@ class BgJobManager:
 
         self._dir = base_dir / "data" / "bg-jobs"
         self._dir.mkdir(parents=True, exist_ok=True)
+
+    def _fmt_elapsed(self, *, started_ms: int | None) -> str:
+        if not started_ms:
+            return "0s"
+        sec = max(0, int((time.time() * 1000 - started_ms) / 1000))
+        return str(timedelta(seconds=sec))
+
+    def _status_text(self, job: BgJob) -> str:
+        elapsed = self._fmt_elapsed(started_ms=job.started_ms)
+        tail = _tail_text(job.log_path, max_chars=1200).strip()
+        lines = [
+            f"BG job #{job.job_id} running",
+            job.title,
+            f"Elapsed: {elapsed}",
+            f"Log: {job.log_path}",
+            "Commands: /job {id} | /job_tail {id} | /job_cancel {id}".format(id=job.job_id),
+        ]
+        if tail:
+            lines.append("")
+            lines.append("Tail:")
+            lines.append(tail)
+        text = "\n".join(lines).strip()
+        return text[:3900] if len(text) > 3900 else text
+
+    async def _ensure_status_message(self, job: BgJob) -> None:
+        if self._heartbeat_sec <= 0:
+            return
+        if job.status_message_id is not None:
+            return
+        try:
+            msg = await self._bot.send_message(
+                chat_id=job.chat_id,
+                text=self._status_text(job),
+                disable_notification=True,
+                disable_web_page_preview=True,
+            )
+            job.status_message_id = getattr(msg, "message_id", None)
+        except Exception as e:
+            self._logger.info("bg status send failed job_id=%s err=%s", job.job_id, e)
+
+    async def _status_loop(self, job: BgJob) -> None:
+        if self._heartbeat_sec <= 0:
+            return
+        await self._ensure_status_message(job)
+        if job.status_message_id is None:
+            return
+
+        while True:
+            await asyncio.sleep(self._heartbeat_sec)
+            if job.ended_ms is not None:
+                return
+            try:
+                await self._bot.edit_message_text(
+                    chat_id=job.chat_id,
+                    message_id=job.status_message_id,
+                    text=self._status_text(job),
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                self._logger.info("bg status edit failed job_id=%s err=%s", job.job_id, e)
 
     async def start(
         self,
@@ -117,6 +180,10 @@ class BgJobManager:
         job.log_path.parent.mkdir(parents=True, exist_ok=True)
         job.log_path.write_text("", encoding="utf-8")
 
+        status_task: asyncio.Task | None = None
+        if self._heartbeat_sec > 0:
+            status_task = asyncio.create_task(self._status_loop(job))
+
         self._logger.info(
             "bg start job_id=%s chat_id=%s cwd=%s cmd=%s",
             job.job_id,
@@ -142,6 +209,14 @@ class BgJobManager:
             rc = await proc.wait()
             job.exit_code = int(rc) if rc is not None else None
             job.ended_ms = int(time.time() * 1000)
+
+        if status_task:
+            status_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await status_task
+        if job.status_message_id is not None:
+            with contextlib.suppress(Exception):
+                await self._bot.delete_message(chat_id=job.chat_id, message_id=job.status_message_id)
 
         self._logger.info(
             "bg done job_id=%s chat_id=%s rc=%s",
