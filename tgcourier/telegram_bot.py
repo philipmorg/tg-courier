@@ -8,11 +8,17 @@ from pathlib import Path
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from .agent import build_agent
+from .bg_jobs import BgJobManager
 from .config import load_settings
 from .handlers import (
     cmd_cancel,
     cmd_claim,
     cmd_drop,
+    cmd_job,
+    cmd_job_cancel,
+    cmd_job_tail,
+    cmd_jobs,
+    cmd_bg,
     cmd_help,
     cmd_mem,
     cmd_mem_rebuild,
@@ -88,6 +94,7 @@ def main(*, echo_local: bool = False, log_path: Path | None = None) -> None:
 
     app = Application.builder().token(settings.token).concurrent_updates(True).build()
     state_lock = asyncio.Lock()
+    bg = BgJobManager(bot=app.bot, base_dir=base_dir, logger=logger)
     queue_manager = QueueManager(
         bot=app.bot,
         agent=agent,
@@ -95,6 +102,7 @@ def main(*, echo_local: bool = False, log_path: Path | None = None) -> None:
         store=store,
         state_lock=state_lock,
         memory=memory,
+        bg=bg,
         logger=logger,
         system_prompt=SYSTEM_PROMPT,
     )
@@ -106,12 +114,18 @@ def main(*, echo_local: bool = False, log_path: Path | None = None) -> None:
     app.bot_data["memory"] = memory
     app.bot_data["state_lock"] = state_lock
     app.bot_data["queue_manager"] = queue_manager
+    app.bot_data["bg_jobs"] = bg
 
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("whoami", cmd_whoami))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("claim", cmd_claim))
     app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("bg", cmd_bg))
+    app.add_handler(CommandHandler("jobs", cmd_jobs))
+    app.add_handler(CommandHandler("job", cmd_job))
+    app.add_handler(CommandHandler("job_tail", cmd_job_tail))
+    app.add_handler(CommandHandler("job_cancel", cmd_job_cancel))
     app.add_handler(CommandHandler("w", cmd_w))
     app.add_handler(CommandHandler("ro", cmd_ro))
     app.add_handler(CommandHandler("sandbox_rw", cmd_sandbox_rw))

@@ -9,11 +9,13 @@ import time
 from telegram.error import TelegramError
 
 from .agent import Agent
+from .bg_jobs import BgJobManager
 from .config import Settings
 from .heartbeat import Heartbeat, heartbeat_loop
 from .memory import MemoryStore
 from .state import StateStore, render_prompt
 from .stt import TranscriptionError, cleanup_file, transcribe_file
+from .tool_directives import extract_detach_directive
 from .tg_oauth import oauth_peekaboo_flow
 from .tg_text import send_chat
 
@@ -48,6 +50,7 @@ class QueueManager:
         store: StateStore,
         state_lock: asyncio.Lock,
         memory: MemoryStore,
+        bg: BgJobManager,
         logger,
         system_prompt: str,
     ) -> None:
@@ -57,6 +60,7 @@ class QueueManager:
         self._store = store
         self._state_lock = state_lock
         self._memory = memory
+        self._bg = bg
         self._logger = logger
         self._system_prompt = system_prompt
         self._oauth_lock = asyncio.Lock()
@@ -312,6 +316,39 @@ class QueueManager:
             if hb.message_id is not None:
                 with contextlib.suppress(Exception):
                     await self._bot.delete_message(chat_id=chat_id, message_id=hb.message_id)
+
+        detach_spec, cleaned = extract_detach_directive(reply.text)
+        if detach_spec:
+            cmd_obj = detach_spec.get("cmd")
+            if isinstance(cmd_obj, str) and cmd_obj.strip():
+                cmd = ["/bin/zsh", "-lc", cmd_obj.strip()]
+            elif isinstance(cmd_obj, list) and all(isinstance(x, str) and x.strip() for x in cmd_obj):
+                cmd = [str(x) for x in cmd_obj]
+            else:
+                msg = "Bad DETACH directive: missing cmd (string or string list)."
+                async with self._state_lock:
+                    store.append(chat_id, "assistant", msg)
+                await send_chat(self._bot, chat_id, msg)
+                return
+
+            title = str(detach_spec.get("title") or "").strip() or "Detached job"
+
+            cwd_raw = detach_spec.get("cwd")
+            cwd = settings.agent_workdir
+            if isinstance(cwd_raw, str) and cwd_raw.strip():
+                p = Path(cwd_raw).expanduser()
+                cwd = (settings.agent_workdir / p) if not p.is_absolute() else p
+
+            bg_job = await self._bg.start(chat_id=chat_id, title=title, cmd=cmd, cwd=cwd)
+            msg = f"Launched background job #{bg_job.job_id}. {title}\nLog: {bg_job.log_path}\nUse /jobs, /job {bg_job.job_id}, /job_tail {bg_job.job_id}, /job_cancel {bg_job.job_id}."
+            if cleaned:
+                msg = cleaned.strip() + "\n\n" + msg
+
+            async with self._state_lock:
+                store.append(chat_id, "assistant", msg)
+            self._logger.info("tx(detach) chat_id=%s job_id=%s bg_job_id=%s", chat_id, job.job_id, bg_job.job_id)
+            await send_chat(self._bot, chat_id, msg)
+            return
 
         async with self._state_lock:
             store.append(chat_id, "assistant", reply.text)

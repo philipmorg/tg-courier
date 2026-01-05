@@ -7,6 +7,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from .config import Settings
+from .bg_jobs import BgJobManager
 from .memory import MemoryStore
 from .queue import QueueManager
 from .state import StateStore
@@ -50,6 +51,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/claim <code> (if enabled)",
         "/reset",
         "/status",
+        "/bg <command> (run in background)",
+        "/jobs",
+        "/job <id>",
+        "/job_tail <id>",
+        "/job_cancel <id>",
         "/queue",
         "/cancel (cancel current + clear queue)",
         "/drop (clear pending queue)",
@@ -229,6 +235,156 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     await qm.cancel_and_clear(update.effective_chat.id)
     await send_update(update, "Canceled current job and cleared queue.")
+
+
+async def cmd_bg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.bot_data["settings"]
+    store: StateStore = context.bot_data["store"]
+    bg: BgJobManager = context.bot_data["bg_jobs"]
+
+    if not _is_allowed_user(settings, store, update):
+        return
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+
+    cmd_text = " ".join(context.args or []).strip()
+    if not cmd_text:
+        await send_update(update, "Usage: /bg <command> (runs detached; bot remains usable)")
+        return
+
+    cmd = ["/bin/zsh", "-lc", cmd_text]
+    title = cmd_text if len(cmd_text) <= 80 else cmd_text[:80] + "…"
+    job = await bg.start(chat_id=update.effective_chat.id, title=title, cmd=cmd, cwd=settings.agent_workdir)
+    await send_update(update, f"Launched background job #{job.job_id}. Log: {job.log_path}")
+
+
+async def cmd_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.bot_data["settings"]
+    store: StateStore = context.bot_data["store"]
+    bg: BgJobManager = context.bot_data["bg_jobs"]
+
+    if not _is_allowed_user(settings, store, update):
+        return
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+
+    jobs = await bg.list_for_chat(update.effective_chat.id, limit=20)
+    if not jobs:
+        await send_update(update, "No background jobs yet.")
+        return
+
+    lines: list[str] = ["Background jobs:"]
+    for j in jobs[:20]:
+        if j.exit_code is None and j.proc is not None and j.proc.returncode is None:
+            status = "running"
+        elif j.exit_code is None and j.ended_ms is None:
+            status = "starting"
+        else:
+            status = f"done exit={j.exit_code}"
+        lines.append(f"- #{j.job_id}: {status} — {j.title}")
+    await send_update(update, "\n".join(lines))
+
+
+async def cmd_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.bot_data["settings"]
+    store: StateStore = context.bot_data["store"]
+    bg: BgJobManager = context.bot_data["bg_jobs"]
+
+    if not _is_allowed_user(settings, store, update):
+        return
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+
+    if not context.args:
+        await send_update(update, "Usage: /job <id>")
+        return
+    try:
+        job_id = int(context.args[0])
+    except ValueError:
+        await send_update(update, "Usage: /job <id> (id must be an integer)")
+        return
+
+    j = await bg.get(job_id)
+    if not j or j.chat_id != update.effective_chat.id:
+        await send_update(update, f"Job #{job_id} not found.")
+        return
+
+    status = "running" if j.proc and j.proc.returncode is None else f"done exit={j.exit_code}"
+    await send_update(
+        update,
+        "\n".join(
+            [
+                f"job: #{j.job_id}",
+                f"status: {status}",
+                f"pid: {j.pid or '(none)'}",
+                f"cwd: {j.cwd}",
+                f"log: {j.log_path}",
+                f"title: {j.title}",
+                f"cmd: {' '.join(j.cmd)}",
+            ]
+        ),
+    )
+
+
+async def cmd_job_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.bot_data["settings"]
+    store: StateStore = context.bot_data["store"]
+    bg: BgJobManager = context.bot_data["bg_jobs"]
+
+    if not _is_allowed_user(settings, store, update):
+        return
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+
+    if not context.args:
+        await send_update(update, "Usage: /job_tail <id>")
+        return
+    try:
+        job_id = int(context.args[0])
+    except ValueError:
+        await send_update(update, "Usage: /job_tail <id> (id must be an integer)")
+        return
+
+    j = await bg.get(job_id)
+    if not j or j.chat_id != update.effective_chat.id:
+        await send_update(update, f"Job #{job_id} not found.")
+        return
+
+    if not j.log_path.exists():
+        await send_update(update, f"No log yet for job #{job_id}.")
+        return
+
+    tail = j.log_path.read_text(encoding="utf-8", errors="replace")
+    tail = tail[-2800:] if len(tail) > 2800 else tail
+    await send_update(update, f"Tail for #{j.job_id}:\n```{tail.strip()}```")
+
+
+async def cmd_job_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.bot_data["settings"]
+    store: StateStore = context.bot_data["store"]
+    bg: BgJobManager = context.bot_data["bg_jobs"]
+
+    if not _is_allowed_user(settings, store, update):
+        return
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+
+    if not context.args:
+        await send_update(update, "Usage: /job_cancel <id>")
+        return
+    try:
+        job_id = int(context.args[0])
+    except ValueError:
+        await send_update(update, "Usage: /job_cancel <id> (id must be an integer)")
+        return
+
+    j = await bg.get(job_id)
+    if not j or j.chat_id != update.effective_chat.id:
+        await send_update(update, f"Job #{job_id} not found.")
+        return
+
+    ok = await bg.cancel(job_id)
+    await send_update(update, "Cancel requested." if ok else "Not running (or already finished).")
 
 
 async def cmd_w(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

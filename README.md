@@ -87,6 +87,11 @@ cd tg-courier
 - `/claim <code>` claim bot (only if `TELEGRAM_CLAIM_CODE` set)
 - `/reset` wipe chat history for this chat
 - `/status` show current settings
+- `/bg <command>` run a shell command detached (bot stays usable)
+- `/jobs` list background jobs
+- `/job <id>` show background job details
+- `/job_tail <id>` show last chunk of log
+- `/job_cancel <id>` request cancel (SIGTERM; kill after ~10s)
 - `/queue` show current + pending jobs
 - `/drop` clear pending jobs (keeps current running)
 - `/cancel` cancel current job and clear queue
@@ -101,6 +106,7 @@ cd tg-courier
 
 - Codex is invoked via `codex exec` and prompt is rebuilt from the JSON history each turn.
 - To use a different CLI, set `AGENT=shell` and `AGENT_CMD="your-command-here"` (prompt on stdin, response on stdout).
+- Long runs: the agent can launch detached background jobs via a `TG_COURIER_TOOL: DETACH` directive; tg-courier logs output and notifies Telegram on completion.
 - Telegram formatting: bot renders a small Markdown-ish subset to Telegram HTML (`**bold**`, `` `code` ``, ``` ``` blocks, and `[label](https://url)` links). If Telegram rejects formatting, it falls back to plain text.
 - Memory: create links like `[[Some Page]]` inside any note in `MEMORY_DIR`; `mem_rebuild` generates a `## Linked references` section in target pages listing backlinks.
 - Speech-to-text: send a Telegram voice note or audio file; tg-courier transcribes with `llm groq-whisper` (requires `ffmpeg` + `llm-groq-whisper` plugin).
