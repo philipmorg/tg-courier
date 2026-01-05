@@ -8,6 +8,7 @@ data/state.json
 data/tg-courier.log
 data/*.corrupt.*
 data/inbox/
+data/bg-jobs/
 
 # Keep the directory, not your notes
 memory/**/*.tmp.*
